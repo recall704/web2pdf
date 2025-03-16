@@ -1,6 +1,6 @@
 import argparse
 from playwright.sync_api import sync_playwright
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 
 def convert_to_pdf(
     url: str,
@@ -17,7 +17,8 @@ def convert_to_pdf(
     viewport_height: int = 800,
     timeout: int = 30000,
     wait_for_network: bool = True,
-    prefer_css_page_size: bool = True
+    prefer_css_page_size: bool = True,
+    hide_selectors: Optional[List[str]] = None
 ):
     """Convert webpage to PDF with customizable options.
 
@@ -37,6 +38,7 @@ def convert_to_pdf(
         timeout: Maximum time to wait for page load in milliseconds (default: 30000)
         wait_for_network: Whether to wait for network requests to complete (default: True)
         prefer_css_page_size: Whether to prefer page size from CSS @page (default: True)
+        hide_selectors: List of CSS selectors for elements to hide (default: None)
     """
     with sync_playwright() as p:
         # Launch browser
@@ -53,6 +55,22 @@ def convert_to_pdf(
         
         # Wait for fonts to load
         page.wait_for_load_state('networkidle')
+        
+        # Hide elements based on CSS selectors if specified
+        if hide_selectors:
+            for selector in hide_selectors:
+                selector = selector.strip()
+                if not selector:
+                    continue
+                try:
+                    # Use JavaScript to hide the elements
+                    page.evaluate(f"""
+                        document.querySelectorAll('{selector}').forEach(element => {{
+                            element.style.display = 'none';
+                        }});
+                    """)
+                except Exception as e:
+                    print(f"Warning: Could not hide elements with selector '{selector}': {e}")
         
         # Generate PDF with specified options
         page.pdf(
@@ -77,6 +95,8 @@ def main():
     parser = argparse.ArgumentParser(description='Convert webpage to PDF using Playwright')
     parser.add_argument('-i', '--url', required=True, help='Input URL of the webpage')
     parser.add_argument('-o', '--output', required=True, help='Output PDF file path')
+    parser.add_argument('-d', '--hide-selector', dest='hide_selectors',
+                        help='Comma-separated CSS selectors for elements to hide (e.g., ".navbar,#sidebar,.footer")')
     parser.add_argument('--format', choices=['Letter', 'Legal', 'Tabloid', 'Ledger', 'A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6'],
                         default='A4', help='Page format (default: A4)')
     parser.add_argument('--scale', type=float, default=1.0, help='Scale of the webpage (default: 1.0)')
@@ -97,6 +117,11 @@ def main():
     
     args = parser.parse_args()
     
+    # Process comma-separated hide selectors
+    hide_selectors = None
+    if args.hide_selectors:
+        hide_selectors = [s for s in args.hide_selectors.split(',')]
+    
     try:
         convert_to_pdf(
             args.url,
@@ -113,7 +138,8 @@ def main():
             viewport_height=args.viewport_height,
             timeout=args.timeout,
             wait_for_network=args.wait_for_network,
-            prefer_css_page_size=args.prefer_css_page_size
+            prefer_css_page_size=args.prefer_css_page_size,
+            hide_selectors=hide_selectors
         )
         print(f"Successfully converted {args.url} to {args.output}")
     except Exception as e:
