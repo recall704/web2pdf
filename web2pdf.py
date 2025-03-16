@@ -1,6 +1,12 @@
 import argparse
 from playwright.sync_api import sync_playwright
-from typing import Optional, Literal, List
+from typing import Optional, Literal, List, Dict
+
+default_headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,zh-TW;q=0.7"
+}
+
 
 def convert_to_pdf(
     url: str,
@@ -18,7 +24,9 @@ def convert_to_pdf(
     timeout: int = 30000,
     wait_for_network: bool = True,
     prefer_css_page_size: bool = True,
-    hide_selectors: Optional[List[str]] = None
+    hide_selectors: Optional[List[str]] = None,
+    proxy: Optional[str] = None,
+    headers: Optional[Dict[str, str]] = None
 ):
     """Convert webpage to PDF with customizable options.
 
@@ -39,23 +47,33 @@ def convert_to_pdf(
         wait_for_network: Whether to wait for network requests to complete (default: True)
         prefer_css_page_size: Whether to prefer page size from CSS @page (default: True)
         hide_selectors: List of CSS selectors for elements to hide (default: None)
+        proxy: Proxy server to use (e.g., http://127.0.0.1:8080 or socks5://127.0.0.1:8081) (default: None)
+        headers: HTTP headers to use when loading the page (default: None)
     """
     with sync_playwright() as p:
-        # Launch browser
-        browser = p.chromium.launch()
-        
+        # Launch browser with proxy if specified
+        browser_args = {}
+        if proxy:
+            browser_args["proxy"] = {"server": proxy}
+
+        browser = p.chromium.launch(**browser_args)
+
         # Create new page with specified viewport
         page = browser.new_page(viewport={'width': viewport_width, 'height': viewport_height})
-        
+
+        # Set extra HTTP headers if specified
+        if headers:
+            page.set_extra_http_headers(headers)
+
         # Emulate print media
         page.emulate_media(media='print')
-        
+
         # Navigate to URL and wait for load
         page.goto(url, timeout=timeout, wait_until='networkidle' if wait_for_network else 'load')
-        
+
         # Wait for fonts to load
         page.wait_for_load_state('networkidle')
-        
+
         # Hide elements based on CSS selectors if specified
         if hide_selectors:
             for selector in hide_selectors:
@@ -71,7 +89,7 @@ def convert_to_pdf(
                     """)
                 except Exception as e:
                     print(f"Warning: Could not hide elements with selector '{selector}': {e}")
-        
+
         # Generate PDF with specified options
         page.pdf(
             path=output_path,
@@ -87,7 +105,7 @@ def convert_to_pdf(
             landscape=landscape,
             prefer_css_page_size=prefer_css_page_size
         )
-        
+
         # Close browser
         browser.close()
 
@@ -114,14 +132,34 @@ def main():
                         help='Do not wait for network requests to complete')
     parser.add_argument('--no-prefer-css-page-size', action='store_false', dest='prefer_css_page_size',
                         help='Do not prefer page size from CSS @page')
-    
+    parser.add_argument('--proxy', help='Proxy server to use (e.g., http://127.0.0.1:8080 or socks5://127.0.0.1:8081)')
+    parser.add_argument('--header', action='append', dest='headers',
+                        help='HTTP headers to use (can be used multiple times, format: "Name: Value")')
+
     args = parser.parse_args()
-    
+
     # Process comma-separated hide selectors
     hide_selectors = None
     if args.hide_selectors:
         hide_selectors = [s for s in args.hide_selectors.split(',')]
-    
+
+    # Process headers
+    headers = None
+    if args.headers:
+        headers = {}
+        for header in args.headers:
+            try:
+                name, value = header.split(':', 1)
+                headers[name.strip()] = value.strip()
+            except ValueError:
+                print(f"Warning: Invalid header format: {header}. Expected format: 'Name: Value'")
+
+    # Set default User-Agent header if not specified
+    if not headers:
+        headers = default_headers
+    else:
+        headers.update(default_headers)
+
     try:
         convert_to_pdf(
             args.url,
@@ -139,7 +177,9 @@ def main():
             timeout=args.timeout,
             wait_for_network=args.wait_for_network,
             prefer_css_page_size=args.prefer_css_page_size,
-            hide_selectors=hide_selectors
+            hide_selectors=hide_selectors,
+            proxy=args.proxy,
+            headers=headers
         )
         print(f"Successfully converted {args.url} to {args.output}")
     except Exception as e:
